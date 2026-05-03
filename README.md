@@ -51,6 +51,18 @@ Full setup notes → [setup.md](setup.md)
 - [ ] Mount cameras: 1 fixed overhead/side + 1 wrist cam if available. **Tape camera positions to the table** — if they move between sessions, your dataset is poisoned. *(0.5-1h)*
 - [ ] Run `lerobot-teleoperate` with cameras enabled. Verify smooth tracking and clean image streams. *(0.25h)*
 
+  ```bash
+  lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=COM5 \
+    --robot.id=my_follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=COM6 \
+    --teleop.id=my_leader \
+    --display_data=true
+  ```
+
 ### Deliverables
 
 - Teleop video: 30s of you driving the follower with the leader, both cam feeds visible.
@@ -68,17 +80,46 @@ Full setup notes → [setup.md](setup.md)
 
 ### TODO
 
-- [ ] **Write a one-paragraph task spec** before recording anything. Example: "Pick a 3cm red foam cube from anywhere in a 15x15cm zone on the left, place it inside a black square target on the right. Cube initial orientation arbitrary. Episode ends when cube is stationary in target zone." *(0.25h)*
+- [x] **Write a one-paragraph task spec** before recording anything. *(0.25h)*
+
+  > Pick a 3cm red plastic cube from anywhere in a 15x15cm zone (bounded by transparent tape) on the left, place it inside a white square box on the right. Cube initial orientation arbitrary. Episode ends when cube is stationary in target zone.
 - [ ] Tape down: workspace bounds, initial cube zone, target zone. Mark camera positions. *(0.25h)*
 - [ ] Record 5 throwaway practice demos with `lerobot-record` to develop your own teleop muscle memory. **Do not use these for training.** *(0.5h)*
-- [ ] Record 50 real demos. Vary cube initial pose across the full zone. **Reset between every demo with consistent lighting.** Aim for ~10s episodes. *(2-3h including breaks — fatigue kills demo quality)*
-- [ ] Push to a local HF dataset; visualize 5 random episodes with `lerobot-visualize-dataset`. *(0.5h)*
+- [ ] Record 50 real demos. Vary cube initial pose across the full zone. **Reset between every demo with consistent lighting.** Aim for ~20s episodes. *(2-3h including breaks — fatigue kills demo quality)*
+
+  ```bash
+  lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=COM5 \
+    --robot.id=my_follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=COM6 \
+    --teleop.id=my_leader \
+    --display_data=true \
+    --dataset.repo_id=HALDijkstraaa/so101_pickplace \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="Pick the cube and place it in the white box" \
+    --dataset.episode_time_s=20 \
+    --dataset.reset_time_s=5 \
+    --dataset.fps=30 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true
+  ```
+
+- [ ] Visualize the uploaded dataset at [https://huggingface.co/spaces/lerobot/visualize_dataset](https://huggingface.co/spaces/lerobot/visualize_dataset). *(0.5h)*
 - [ ] Sanity checks: action histograms not clipped at limits, no zero-length episodes, no episodes where you fumbled and recovered (those teach the policy bad recovery habits — re-record). *(0.5h)*
 - [ ] Optional but worth it: record 10 extra demos with deliberately varied lighting / minor distractors. Compare downstream eval with vs. without these later. *(1h)*
 
+### Troubleshooting
+
+**`urllib.error.URLError: <urlopen error [WinError 10054] An existing connection was forcibly closed by the remote host>`**
+This is an IPv6 issue on Windows. Fix: disable IPv6 on the Wi-Fi adapter in Network Adapter Settings.
+See [huggingface_hub#2043](https://github.com/huggingface/huggingface_hub/issues/2043) for details.
+
 ### Deliverables
 
-- HuggingFace dataset on disk with 50 (or 60) episodes.
+- HuggingFace dataset on disk with 50 (or 60) episodes: [HALDijkstraaa/so101_pickplace_20260501_134521](https://huggingface.co/datasets/HALDijkstraaa/so101_pickplace_20260501_134521)
 - Visualization screenshots showing diverse cube positions across the zone.
 - Action statistics printout.
 
@@ -98,13 +139,29 @@ Full setup notes → [setup.md](setup.md)
 - [ ] Read the policy config you're using. Specifically know your: `n_obs_steps`, `horizon`, `n_action_steps`, action space (joint vs. EE), normalization mode. *(0.5h — this is the conceptual crux)*
 - [ ] Spin up cloud GPU. **Recommendation:** RunPod or Lambda — A10 (24 GB) at ~$0.75/hr is enough for SO-ARM 101 with default config. A100 only if you're impatient. *(0.5h first time)*
 - [ ] Sync dataset to cloud (`rsync` or `huggingface-cli upload` to a private repo). *(0.25h)*
-- [ ] Launch full training: 100k-200k steps, default batch size 64. Expect ~3-5h on A10, ~2h on A100. **Use Weights & Biases or TensorBoard logging** — don't fly blind. *(setup 0.5h, train runs in background)*
+- [ ] Launch full training: 100k steps, batch size 8. **Use Weights & Biases logging** — don't fly blind. *(setup 0.5h, train runs in background)*
+
+  ```powershell
+  lerobot-train `
+    --dataset.repo_id=HALDijkstraaa/so101_pickplace `
+    --dataset.root="$env:USERPROFILE\.cache\huggingface\lerobot\HALDijkstraaa\so101_pickplace_20260501_134521" `
+    --policy.type=act `
+    --output_dir=outputs/train/act_so101_pickplace `
+    --job_name=act_so101_pickplace `
+    --policy.device=cuda `
+    --batch_size=8 `
+    --steps=100000 `
+    --policy.push_to_hub=false `
+    --wandb.enable=true
+  ```
 - [ ] While training runs: build the eval harness (Phase 3 prep). Don't waste the wall clock.
 - [ ] Pull the best checkpoint back to local. *(0.25h)*
 
 ### Deliverables
 
-- Loss curve screenshot showing convergence.
+- Loss curve screenshot showing convergence (`train/l1_loss`, 100k steps, ACT on RTX 3060):
+
+  ![W&B loss curve](outputs/train/act_so101_pickplace/W%26B%20Chart%205_2_2026%2C%207_23_50%20PM.png)
 - Trained `.safetensors` checkpoint on local PC.
 - A note in your journal answering: "If I doubled `n_action_steps`, what would change about robot behavior?"
 
@@ -124,11 +181,57 @@ Full setup notes → [setup.md](setup.md)
 
 ### TODO
 
-- [ ] Build eval script: loads checkpoint, runs `lerobot-eval` (or equivalent) on the real robot, logs per-trial success + failure mode + cube initial pose. *(1-1.5h)*
+- [ ] Run rollout on the real robot using `lerobot-rollout`, log per-trial success + failure mode + cube initial pose. *(1-1.5h)*
+
+  ```powershell
+  lerobot-rollout `
+    --robot.type=so101_follower `
+    --robot.port=COM5 `
+    --robot.id=my_follower `
+    --robot.cameras="{ front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" `
+    --robot.max_relative_target=10 `
+    --display_data=true `
+    --policy.path=outputs/train/act_so101_pickplace/checkpoints/last/pretrained_model `
+    --policy.device=cuda `
+    --strategy.type=sentry `
+    --inference.type=sync `
+    --dataset.repo_id=HALDijkstraaa/rollout_act_so101_pickplace `
+    --dataset.root="$env:USERPROFILE\.cache\huggingface\lerobot\HALDijkstraaa\so101_pickplace" `
+    --dataset.single_task="Pick the cube and place it in the white box" `
+    --dataset.num_episodes=1 `
+    --dataset.episode_time_s=25 `
+    --dataset.reset_time_s=10 `
+    --dataset.fps=30 `
+    --dataset.push_to_hub=false
+  ```
+
+  > **Note:** Use `--policy.path` (not `--policy.pretrained_path`) so the checkpoint's `config.json` is loaded automatically with the correct input features.
 - [ ] Define success criterion *before* running evals (e.g., "cube fully inside target square within 30s"). *(0.1h, but critical for honesty)*
 - [ ] Run 20 trials with cube positions sampled across the training zone. Record video of every trial — you'll want to re-watch failures. *(1.5h)*
 - [ ] Run 10 trials with cube positions slightly *outside* the trained zone. This tells you the generalization story. *(0.75h)*
 - [ ] Categorize failures: approach errors? grasp errors? trajectory drift? releases too early? Don't just report a success rate — the type of failure tells you what to fix. *(0.5h)*
+
+### Observations
+
+**First rollout worked on the first try.** Lighting changed at different times of day — adjusted camera config and it recovered.
+
+**What generalizes well:**
+- Positions: reliably picks up cubes from the 5 training locations; many positions *inside* the boundary also work.
+- Cube face: trained with "simulator" face on top only, but the policy handles other faces on top as well.
+
+**What doesn't generalize:**
+- Orientation: rotating the cube to different horizontal directions causes frequent failure — expected, since only one orientation was collected.
+- Position: anywhere outside the taped boundary fails — the policy cannot extrapolate.
+
+**Key insight — no recovery data:** When the arm misses the cube and starts moving toward the box empty-handed, it has no idea how to recover because it never saw that situation in training. Need to collect deliberate "recovery from failure" demos in the next iteration.
+
+**The three failure modes map onto the three classic limitations of behavioral cloning:**
+
+1. **Demo distribution coverage** (orientation failure) — the policy only knows what you showed it. Unseen orientations are out-of-distribution by definition.
+2. **Geometric extrapolation** (out-of-zone positions) — neural nets interpolate well but extrapolate poorly. The boundary of the tape is roughly the boundary of the policy's competence.
+3. **State distribution shift / compounding errors** (recovery failure) — a small mistake puts the robot in a state it has never seen; errors compound rather than self-correct, and the policy spirals further off-distribution with each step.
+
+Failure mode (3) is the hardest to internalize from reading alone. Feeling it firsthand — watching the arm confidently move to the box with nothing in its gripper — is the visceral version of the lesson.
 
 ### Deliverables
 
@@ -149,7 +252,48 @@ Full setup notes → [setup.md](setup.md)
 
 ### TODO
 
-- [ ] **If failure is data coverage** → collect 20 more demos targeting failure conditions, retrain (cloud, ~2-3h), re-eval. *(4-5h)*
+- [ ] **If failure is data coverage** → use DAgger to collect on-the-fly correction demos, retrain, re-eval. *(4-5h)*
+
+  ```powershell
+  $env:HF_HUB_OFFLINE=1; lerobot-rollout `
+    --robot.type=so101_follower `
+    --robot.port=COM5 `
+    --robot.id=my_follower `
+    --robot.cameras="{ front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" `
+    --robot.max_relative_target=10 `
+    --display_data=true `
+    --policy.path=outputs/train/act_so101_pickplace/checkpoints/last/pretrained_model `
+    --policy.device=cuda `
+    --teleop.type=so101_leader `
+    --teleop.port=COM6 `
+    --teleop.id=my_leader `
+    --strategy.type=dagger `
+    --strategy.record_autonomous=false `
+    --strategy.input_device=keyboard `
+    --strategy.keyboard.pause_resume=space `
+    --strategy.keyboard.correction=c `
+    --strategy.keyboard.upload=u `
+    --inference.type=sync `
+    --dataset.repo_id=HALDijkstraaa/rollout_act_so101_pickplace_dagger_test `
+    --dataset.root="$env:USERPROFILE\.cache\huggingface\lerobot\HALDijkstraaa\rollout_act_so101_pickplace_dagger_test_20260503_110246" `
+    --dataset.single_task="Pick the cube and place it in the white box" `
+    --dataset.num_episodes=20 `
+    --dataset.episode_time_s=30 `
+    --dataset.reset_time_s=15 `
+    --dataset.fps=30 `
+    --dataset.push_to_hub=false `
+    --resume=true
+  ```
+
+  **Keyboard workflow:**
+  1. Watch the policy run autonomously
+  2. Press `SPACE` to pause the policy when it's about to fail
+  3. Move the leader arm to roughly the same position as the follower
+  4. Press `C` to start recording the correction
+  5. Guide the arm through the correct motion with the leader
+  6. Press `C` again to stop recording
+  7. Press `SPACE` to resume the policy
+
 - [ ] **If failure is action-space related** → swap joint/EE action space or absolute/delta, retrain, re-eval. *(3-4h)*
 - [ ] **If failure is camera / visual** → add wrist cam (if not already), retrain, re-eval. *(4-6h)*
 - [ ] Document before/after numbers and what you learned. *(0.5h)*

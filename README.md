@@ -296,12 +296,75 @@ Failure mode (3) is the hardest to internalize from reading alone. Feeling it fi
 
 - [ ] **If failure is action-space related** → swap joint/EE action space or absolute/delta, retrain, re-eval. *(3-4h)*
 - [ ] **If failure is camera / visual** → add wrist cam (if not already), retrain, re-eval. *(4-6h)*
+- [ ] **Dataset merge + retrain on combined data** — strip `intervention` feature from DAgger dataset, merge with original, retrain.
+
+  **Step 1 — remove `intervention` feature from DAgger dataset:**
+
+  ```powershell
+  lerobot-edit-dataset `
+    --repo_id=HALDijkstraaa/rollout_act_so101_pickplace_dagger_test `
+    --root="$env:USERPROFILE\.cache\huggingface\lerobot\HALDijkstraaa\rollout_act_so101_pickplace_dagger_test_20260503_110246" `
+    --new_repo_id=HALDijkstraaa/rollout_act_so101_pickplace_dagger_cleaned `
+    --new_root=outputs/datasets/dagger_cleaned `
+    --operation.type=remove_feature `
+    --operation.feature_names="['intervention']" `
+    --push_to_hub=false
+  ```
+
+  **Step 2 — merge cleaned DAgger + original (50 + 21 = 71 episodes):**
+
+  ```powershell
+  lerobot-edit-dataset `
+    --new_repo_id=HALDijkstraaa/so101_pickplace_merged `
+    --new_root=outputs/datasets/so101_pickplace_merged `
+    --operation.type=merge `
+    --operation.repo_ids="['HALDijkstraaa/so101_pickplace', 'HALDijkstraaa/rollout_act_so101_pickplace_dagger_cleaned']" `
+    --operation.roots="['$env:USERPROFILE\.cache\huggingface\lerobot\HALDijkstraaa\so101_pickplace_20260501_134521', 'outputs/datasets/dagger_cleaned']" `
+    --push_to_hub=false
+  ```
+
+  **Step 3 — retrain ACT on merged dataset:**
+
+  ```powershell
+  lerobot-train `
+    --dataset.repo_id=HALDijkstraaa/so101_pickplace_merged `
+    --dataset.root=outputs/datasets/so101_pickplace_merged `
+    --policy.type=act `
+    --output_dir=outputs/train/act_so101_pickplace_v2 `
+    --job_name=act_so101_pickplace_v2 `
+    --policy.device=cuda `
+    --batch_size=8 `
+    --steps=60000 `
+    --policy.push_to_hub=false `
+    --wandb.enable=true
+  ```
+
 - [ ] Document before/after numbers and what you learned. *(0.5h)*
+
+### Observations
+
+**DAgger data added:** 8 samples for new positions, 4 for orientations, 8 for recovery from failed pickup (21 episodes total).
+
+**Overall result: v2 performed worse than v1.**
+
+**What worked:**
+- Generalized to two new positions at the intersections of major training positions.
+- Learned partial recovery behavior — when it fails to pick up, it now returns to the cube faster instead of resetting to home position first. This gives it more chances to reattempt.
+
+**What didn't work:**
+- Orientation samples backfired. Showing the robot multiple grasp angles for different orientations confused it about the correct way to grasp in the standard case. It now fails pickups where plenty of clean data existed before.
+
+**Summary:** Found that adding small amounts of intervention data via HG-DAgger had heterogeneous effects: 8 recovery samples in previously-uncovered states improved performance, but 4 orientation samples — covering visual states already in the dataset but with inconsistent action labels — degraded performance overall. This is consistent with the multimodal action distribution problem that motivates approaches like IWR and Diffusion Policy, and with the broader finding that BC is more sensitive to data consistency than data quantity at small scales.
+
+**Key lesson — small noisy data can pollute clean data.** A few samples of high-variance behavior (many different grasp angles) can override the consistent signal from 50 well-collected demos. This is the data-quality-over-quantity principle from Phase 1 showing up in a different form: it's not just about quantity, it's about *consistency*. If you add DAgger data for a new behavior, you need enough samples to form a reliable signal — not just 4.
 
 ### Deliverables
 
 - Second eval table showing the delta.
 - A short writeup (~200 words) explaining the change and result — useful for future-you and shareable.
+- Loss curve for v2 (merged dataset: 50 original + 21 DAgger episodes, ACT, ~60k steps):
+
+  ![W&B loss curve v2](outputs/train/act_so101_pickplace_v2/W%26B%20Chart%205_3_2026%2C%206_57_03%20PM.png)
 
 ---
 

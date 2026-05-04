@@ -1,10 +1,10 @@
-﻿# Diffusion Policy Hackathon Plan
+﻿# ACT Policy Hackathon Plan
 
 End-to-end pipeline on SO-ARM 101 — 3 to 5 day self-hackathon — prepared for Bingjian Huang
 
 ## Overall Strategy
 
-Given the 2060's 6 GB VRAM will almost certainly bottleneck a real diffusion-policy run, smoke-test locally to confirm the pipeline is wired up end-to-end, then rent an A10/A100 for roughly $5-10 of cloud spend for the actual training run.
+Training runs locally on the RTX 3060 (6 GB VRAM) with ACT policy. Batch size 8 fits comfortably; 100k steps takes a few hours on the 3060. Cloud (A10/A100) is an option if you need faster iteration or larger batch sizes.
 
 **Learning emphasis matters more than shipping.** Each phase has a *learning goal* — the concept to walk away owning, not just the artifact produced. Spend ten minutes at the end of each phase journaling what surprised you; that's where the real value compounds.
 
@@ -125,20 +125,18 @@ See [huggingface_hub#2043](https://github.com/huggingface/huggingface_hub/issues
 
 ---
 
-## Phase 2 — Smoke Test & Cloud Training
+## Phase 2 — Training
 
-**Goal.** Diffusion policy training to convergence on cloud, with confidence the pipeline isn't silently broken.
+**Goal.** ACT policy training to convergence locally, with confidence the pipeline isn't silently broken.
 
-**Learning goal.** *Diffusion policy's three knobs — observation horizon, prediction horizon, action execution horizon — and what each controls in practice.*
+**Learning goal.** *ACT's key parameters — `n_obs_steps`, `chunk_size` (action chunk / prediction horizon), action space — and what each controls in practice.*
 
 **Time:** 4-5h active (training itself runs in background)
 
 ### TODO
 
-- [ ] **Local smoke run on 2060:** `lerobot-train` with `policy=diffusion`, `batch_size=8`, `steps=2000`. Verify loss decreases, checkpoints save, no OOM. If OOM at bs=8, drop image resolution to 96x96. *(1h)*
-- [ ] Read the policy config you're using. Specifically know your: `n_obs_steps`, `horizon`, `n_action_steps`, action space (joint vs. EE), normalization mode. *(0.5h — this is the conceptual crux)*
-- [ ] Spin up cloud GPU. **Recommendation:** RunPod or Lambda — A10 (24 GB) at ~$0.75/hr is enough for SO-ARM 101 with default config. A100 only if you're impatient. *(0.5h first time)*
-- [ ] Sync dataset to cloud (`rsync` or `huggingface-cli upload` to a private repo). *(0.25h)*
+- [ ] **Local smoke run on RTX 3060:** `lerobot-train` with `policy=act`, `batch_size=8`, `steps=2000`. Verify loss decreases, checkpoints save, no OOM. *(1h)*
+- [ ] Read the policy config you're using. Specifically know your: `n_obs_steps`, `chunk_size`, action space (joint vs. EE), normalization mode. *(0.5h — this is the conceptual crux)*
 - [ ] Launch full training: 100k steps, batch size 8. **Use Weights & Biases logging** — don't fly blind. *(setup 0.5h, train runs in background)*
 
   ```powershell
@@ -161,13 +159,13 @@ See [huggingface_hub#2043](https://github.com/huggingface/huggingface_hub/issues
 
 - Loss curve screenshot showing convergence (`train/l1_loss`, 100k steps, ACT on RTX 3060):
 
-  ![W&B loss curve](outputs/train/act_so101_pickplace/W%26B%20Chart%205_2_2026%2C%207_23_50%20PM.png)
+  ![W&B loss curve](assets/wandb_loss_v1.png)
 - Trained `.safetensors` checkpoint on local PC.
 - A note in your journal answering: "If I doubled `n_action_steps`, what would change about robot behavior?"
 
 ### Decision gate
 
-> Before paying for cloud: if the local 2000-step smoke run takes >45 min, the 2060 is hopeless for the real run — go cloud. If it takes <15 min, you *could* try a shorter local run (50k steps, ~10-12h overnight), but cloud is still faster and barely costs anything.
+> RTX 3060 handled 100k steps of ACT (batch size 8) without OOM. If you hit memory issues, drop image resolution to 96×96 or reduce batch size to 4.
 
 ---
 
@@ -212,6 +210,8 @@ See [huggingface_hub#2043](https://github.com/huggingface/huggingface_hub/issues
 - [ ] Categorize failures: approach errors? grasp errors? trajectory drift? releases too early? Don't just report a success rate — the type of failure tells you what to fix. *(0.5h)*
 
 ### Observations
+
+![Rollout demo](assets/rollout_demo.gif)
 
 **First rollout worked on the first try.** Lighting changed at different times of day — adjusted camera config and it recovered.
 
@@ -364,7 +364,7 @@ Failure mode (3) is the hardest to internalize from reading alone. Feeling it fi
 - A short writeup (~200 words) explaining the change and result — useful for future-you and shareable.
 - Loss curve for v2 (merged dataset: 50 original + 21 DAgger episodes, ACT, ~60k steps):
 
-  ![W&B loss curve v2](outputs/train/act_so101_pickplace_v2/W%26B%20Chart%205_3_2026%2C%206_57_03%20PM.png)
+  ![W&B loss curve v2](assets/wandb_loss_v2.png)
 
 ---
 
@@ -399,5 +399,5 @@ The pipeline is the same; only the task spec, demos, and config change. Stack-tw
 ## A Few Things to Watch For
 
 - **LeRobot is moving fast.** CLI commands have changed names recently. Pin your commit hash in `setup.md` and use that exact version end-to-end.
-- **Don't optimize before measuring.** You'll be tempted to tune DP hyperparameters before running evals. Don't. Default config first, eval, *then* iterate.
+- **Don't optimize before measuring.** You'll be tempted to tune ACT hyperparameters before running evals. Don't. Default config first, eval, *then* iterate.
 - **Stop demo collection when bored, not when hitting a number.** Tired demos are bad demos. 40 fresh demos beat 60 fatigued ones.
